@@ -26,8 +26,8 @@ function processFile(filePath) {
   // 3. Disable precompiled modules in autolinking
   if (filePath.endsWith('precompiled_modules.rb')) {
     content = content.replace(
-      /def enabled\?[\s\S]*?end\r?\n/m,
-      'def enabled?\n        false\n      end\n'
+      'return true if prebuilt_react_active?',
+      'return false'
     );
   }
 
