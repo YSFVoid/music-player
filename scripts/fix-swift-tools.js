@@ -15,10 +15,33 @@ function processFile(filePath) {
     return;
   }
 
-  // All other patches are strictly for expo-modules-jsi
-  if (!filePath.includes('expo-modules-jsi')) return;
+  // 2. Force ExpoModulesCore to build from source
+  if (filePath.endsWith('ExpoModulesCore.podspec')) {
+    content = content.replace(
+      /if \(!Expo::PackagesConfig\.instance\.try_link_with_prebuilt_xcframework\(s\)\)/g,
+      'if true # force build from source'
+    );
+  }
 
-  // 2. Fix Task+immediate.swift for Swift 6.0/6.1 compatibility
+  // 3. Disable precompiled modules in autolinking
+  if (filePath.endsWith('precompiled_modules.rb')) {
+    content = content.replace(
+      /def enabled\?[\s\S]*?end\r?\n/m,
+      'def enabled?\n        false\n      end\n'
+    );
+  }
+
+  // 4. Fix any .swiftinterface files (replace Swift 6.3+ attributes)
+  if (filePath.endsWith('.swiftinterface')) {
+    content = content.replace(/@_Concurrency\.MainActor/g, '@MainActor');
+    content = content.replace(/Apple Swift version 6\.[23][^\n]*/g, 'Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)');
+    content = content.replace(/-interface-compiler-version 6\.[23][^\s]*/g, '-interface-compiler-version 6.1.2');
+  }
+
+  // All other patches are strictly for expo-modules-jsi
+  if (filePath.includes('expo-modules-jsi')) {
+
+  // 5. Fix Task+immediate.swift for Swift 6.0/6.1 compatibility
   if (filePath.endsWith('Task+immediate.swift')) {
     content = content.replace(
       /if #available\([\s\S]*?\n\s*\}\s*else\s*\{[\s\S]*?\n\s*\}/m,
@@ -139,8 +162,9 @@ function processFile(filePath) {
       );
     }
   }
+  }
 
-  // 9. Fix weak let / weak var in Sendable classes for Swift 6.0/6.1 compatibility
+  // 12. Fix weak let / weak var in Sendable classes for Swift 6.0/6.1 compatibility
   if (filePath.endsWith('.swift')) {
     content = content.replace(
       /([^\w])weak\s+(?:let|var)\s+runtime\b/g,
@@ -168,7 +192,10 @@ function walkDir(dir) {
       walkDir(fullPath);
     } else if (
       entry.name.endsWith('.swift') ||
+      entry.name.endsWith('.swiftinterface') ||
       entry.name === 'Package.swift' ||
+      entry.name === 'ExpoModulesCore.podspec' ||
+      entry.name === 'precompiled_modules.rb' ||
       entry.name === 'RuntimeScheduler.h' ||
       entry.name === 'RetainedSwiftPointer.h' ||
       entry.name === 'HostFunctionClosure.h' ||
@@ -182,3 +209,4 @@ function walkDir(dir) {
 
 walkDir(path.join(__dirname, '..', 'node_modules'));
 walkDir(path.join(__dirname, '..', 'ios'));
+walkDir(path.join(__dirname, '..', 'build'));
