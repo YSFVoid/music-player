@@ -33,10 +33,15 @@ function processFile(filePath) {
       /_ arguments: consuming JavaScriptValuesBuffer,\s*\)/g,
       '_ arguments: consuming JavaScriptValuesBuffer\n    )'
     );
-    // Fix vector.push_back(consuming: propNameId) -> vector.push_back(propNameId)
+    // Fix immutable scheduler mutating member error
     content = content.replace(
-      /vector\.push_back\(consuming:\s*(\w+)\)/g,
-      'vector.push_back($1)'
+      'internal let scheduler: expo.RuntimeScheduler',
+      'internal var scheduler: expo.RuntimeScheduler'
+    );
+    // Fix vector.push_back using C++ helper
+    content = content.replace(
+      /for propertyName in propertyNames \{[\s\S]*?vector\.push_back\([^\)]*\)\s*\}/m,
+      'for propertyName in propertyNames {\n        expo.pushPropNameId(&vector, iRuntime, std.string(propertyName))\n      }'
     );
   }
 
@@ -47,6 +52,10 @@ function processFile(filePath) {
     content = content.replace(
       /RuntimeScheduler\(const RuntimeScheduler &\) = delete;/g,
       'RuntimeScheduler(const RuntimeScheduler &other) : nativeScheduler(other.nativeScheduler), scheduleFn(other.scheduleFn) {}'
+    );
+    content = content.replace(
+      /void scheduleTask\(Priority priority, ScheduleTaskCallback callback\) noexcept/g,
+      'void scheduleTask(Priority priority, ScheduleTaskCallback callback) const noexcept'
     );
   }
 
@@ -79,7 +88,33 @@ function processFile(filePath) {
     }
   }
 
-  // 7. Fix weak let / weak var in Sendable classes for Swift 6.0/6.1 compatibility
+  // 7. Fix JSIUtils.h (accept HostFunctionClosure by const ref)
+  if (filePath.endsWith('JSIUtils.h')) {
+    content = content.replace(
+      /createHostFunction\(jsi::IRuntime &runtime, const jsi::PropNameID &propName, HostFunctionClosure \*closure\)/g,
+      'createHostFunction(jsi::IRuntime &runtime, const jsi::PropNameID &propName, const HostFunctionClosure &closure)'
+    );
+    content = content.replace(
+      /auto closurePtr = std::shared_ptr<HostFunctionClosure>\(closure\);/g,
+      'auto closurePtr = std::make_shared<HostFunctionClosure>(closure);'
+    );
+    content = content.replace(
+      /createHostFunction\(jsi::IRuntime &runtime, const char \*name, HostFunctionClosure \*closure\)/g,
+      'createHostFunction(jsi::IRuntime &runtime, const char *name, const HostFunctionClosure &closure)'
+    );
+  }
+
+  // 8. Fix HostObjectCallbacks.h (add pushPropNameId helper)
+  if (filePath.endsWith('HostObjectCallbacks.h')) {
+    if (!content.includes('pushPropNameId')) {
+      content = content.replace(
+        /(\} SWIFT_NONCOPYABLE;[^\n]*\n)/,
+        '$1\ninline void pushPropNameId(HostObjectCallbacks::PropNameIds &vector, facebook::jsi::Runtime &runtime, const std::string &name) {\n  vector.push_back(facebook::jsi::PropNameID::forUtf8(runtime, name));\n}\n'
+      );
+    }
+  }
+
+  // 9. Fix weak let / weak var in Sendable classes for Swift 6.0/6.1 compatibility
   if (filePath.endsWith('.swift')) {
     content = content.replace(
       /([^\w])weak\s+(?:let|var)\s+runtime\b/g,
@@ -110,7 +145,9 @@ function walkDir(dir) {
       entry.name === 'Package.swift' ||
       entry.name === 'RuntimeScheduler.h' ||
       entry.name === 'RetainedSwiftPointer.h' ||
-      entry.name === 'HostFunctionClosure.h'
+      entry.name === 'HostFunctionClosure.h' ||
+      entry.name === 'JSIUtils.h' ||
+      entry.name === 'HostObjectCallbacks.h'
     ) {
       processFile(fullPath);
     }
