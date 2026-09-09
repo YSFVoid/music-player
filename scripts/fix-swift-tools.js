@@ -109,7 +109,7 @@ function processFile(filePath) {
     if (!content.includes('pushPropNameId')) {
       content = content.replace(
         /(\} SWIFT_NONCOPYABLE;[^\n]*\n)/,
-        '$1\ninline void pushPropNameId(HostObjectCallbacks::PropNameIds &vector, facebook::jsi::Runtime &runtime, const std::string &name) {\n  vector.push_back(facebook::jsi::PropNameID::forUtf8(runtime, name));\n}\n'
+        '$1\ninline void pushPropNameId(HostObjectCallbacks::PropNameIds &vector, facebook::jsi::IRuntime &runtime, const std::string &name) {\n  vector.push_back(facebook::jsi::PropNameID::forUtf8(runtime, name));\n}\n'
       );
     }
   }
