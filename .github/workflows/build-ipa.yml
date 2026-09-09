@@ -37,13 +37,12 @@ jobs:
       - name: Build iOS Application Archive (Unsigned)
         run: |
           WORKSPACE=$(find ios -name "*.xcworkspace" | head -n 1)
-          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list -json | jq -r '.workspace.schemes[0]')
           echo "Found workspace: $WORKSPACE"
-          echo "Found scheme: $SCHEME"
           xcodebuild -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
+            -scheme "MusicPlayer" \
             -configuration Release \
             -sdk iphoneos \
+            -destination "generic/platform=iOS" \
             -derivedDataPath "$GITHUB_WORKSPACE/build/derivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -53,8 +52,12 @@ jobs:
       - name: Package .app into .ipa for Sideloadly / AltStore
         run: |
           mkdir -p "$GITHUB_WORKSPACE/build/Payload"
-          APP_PATH=$(find "$GITHUB_WORKSPACE/build/derivedData/Build/Products/Release-iphoneos" -name "*.app" -maxdepth 1 | head -n 1)
+          APP_PATH=$(find "$GITHUB_WORKSPACE/build/derivedData" -name "*.app" | head -n 1)
           echo "Found compiled app at: $APP_PATH"
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: No .app package was found in derivedData!"
+            exit 1
+          fi
           cp -r "$APP_PATH" "$GITHUB_WORKSPACE/build/Payload/"
           cd "$GITHUB_WORKSPACE/build"
           zip -r MusicPlayer.ipa Payload
