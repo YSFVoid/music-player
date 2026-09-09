@@ -26,8 +26,14 @@ jobs:
       - name: Install NPM Dependencies
         run: npm install
 
+      - name: Patch Swift Tools Version for Xcode 16 Compatibility
+        run: node scripts/fix-swift-tools.js
+
       - name: Expo Prebuild (Generate iOS Native Project)
         run: npx expo prebuild --platform ios --clean
+
+      - name: Re-patch Swift Tools Version after Prebuild
+        run: node scripts/fix-swift-tools.js
 
       - name: Install CocoaPods Dependencies
         run: |
