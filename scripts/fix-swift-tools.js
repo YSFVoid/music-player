@@ -8,25 +8,78 @@ function processFile(filePath) {
   // 1. Fix Swift tools version in Package.swift
   if (path.basename(filePath) === 'Package.swift') {
     content = content.replace(/swift-tools-version:\s*6\.[12]/g, 'swift-tools-version: 6.0');
+    if (content !== original) {
+      fs.writeFileSync(filePath, content, 'utf8');
+      console.log(`[fix-swift] Patched: ${filePath}`);
+    }
+    return;
   }
 
-  // 2. Fix trailing comma in JavaScriptRuntime.swift
+  // All other patches are strictly for expo-modules-jsi
+  if (!filePath.includes('expo-modules-jsi')) return;
+
+  // 2. Fix Task+immediate.swift for Swift 6.0/6.1 compatibility
+  if (filePath.endsWith('Task+immediate.swift')) {
+    content = content.replace(
+      /if #available\([\s\S]*?\n\s*\}\s*else\s*\{[\s\S]*?\n\s*\}/m,
+      'return Task(priority: .high, operation: operation)'
+    );
+  }
+
+  // 3. Fix JavaScriptRuntime.swift
   if (filePath.endsWith('JavaScriptRuntime.swift')) {
+    // Fix trailing comma in closure tuple
     content = content.replace(
       /_ arguments: consuming JavaScriptValuesBuffer,\s*\)/g,
       '_ arguments: consuming JavaScriptValuesBuffer\n    )'
     );
-  }
-
-  // 3. Fix SWIFT_RETURNS_RETAINED in RuntimeScheduler.h
-  if (filePath.endsWith('RuntimeScheduler.h')) {
+    // Fix vector.push_back(consuming: propNameId) -> vector.push_back(propNameId)
     content = content.replace(
-      /SWIFT_RETURNS_RETAINED\s+RuntimeScheduler\(/g,
-      'RuntimeScheduler('
+      /vector\.push_back\(consuming:\s*(\w+)\)/g,
+      'vector.push_back($1)'
     );
   }
 
-  // 4. Fix weak let / weak var in Sendable classes for Swift 6.0/6.1 compatibility
+  // 4. Fix RuntimeScheduler.h for Swift 6.0/6.1 compatibility
+  if (filePath.endsWith('RuntimeScheduler.h')) {
+    content = content.replace(/SWIFT_RETURNS_RETAINED\s+/g, '');
+    content = content.replace(/SWIFT_SHARED_REFERENCE\([^)]*\);/g, ';');
+    content = content.replace(
+      /RuntimeScheduler\(const RuntimeScheduler &\) = delete;/g,
+      'RuntimeScheduler(const RuntimeScheduler &other) : nativeScheduler(other.nativeScheduler), scheduleFn(other.scheduleFn) {}'
+    );
+  }
+
+  // 5. Fix RetainedSwiftPointer.h
+  if (filePath.endsWith('RetainedSwiftPointer.h')) {
+    content = content.replace(/SWIFT_IMMORTAL_REFERENCE;/g, ';');
+    content = content.replace(/using Deallocator = void\(Context\);/g, 'using Deallocator = void (*)(Context);');
+    content = content.replace(/Deallocator \*_Nonnull _deallocator;/g, 'Deallocator _deallocator;');
+    if (!content.includes('RetainedSwiftPointer(const RetainedSwiftPointer &')) {
+      content = content.replace(
+        /virtual ~RetainedSwiftPointer\(\) = default;/g,
+        'virtual ~RetainedSwiftPointer() = default;\n  RetainedSwiftPointer(const RetainedSwiftPointer &other) : _context(other._context), _deallocator(other._deallocator) {}'
+      );
+    }
+  }
+
+  // 6. Fix HostFunctionClosure.h
+  if (filePath.endsWith('HostFunctionClosure.h')) {
+    content = content.replace(/SWIFT_IMMORTAL_REFERENCE;/g, ';');
+    content = content.replace(
+      /using Closure = (?:bool|void)\s*\(Context context, const facebook::jsi::Value \*_Nonnull thisValue, const facebook::jsi::Value \*_Nonnull args, size_t count, facebook::jsi::Value \*_Nonnull result\);/g,
+      'using Closure = bool (*)(Context context, const facebook::jsi::Value *_Nonnull thisValue, const facebook::jsi::Value *_Nonnull args, size_t count, facebook::jsi::Value *_Nonnull result);'
+    );
+    content = content.replace(/Closure \*_Nonnull _closure;/g, 'Closure _closure;');
+    if (!content.includes('HostFunctionClosure(const HostFunctionClosure &')) {
+      content = content.replace(
+        /virtual ~HostFunctionClosure\(\)/g,
+        'HostFunctionClosure(const HostFunctionClosure &other) : RetainedSwiftPointer(other), _closure(other._closure) {}\n  virtual ~HostFunctionClosure()'
+      );
+    }
+  }
+
+  // 7. Fix weak let / weak var in Sendable classes for Swift 6.0/6.1 compatibility
   if (filePath.endsWith('.swift')) {
     content = content.replace(
       /([^\w])weak\s+(?:let|var)\s+runtime\b/g,
@@ -55,7 +108,9 @@ function walkDir(dir) {
     } else if (
       entry.name.endsWith('.swift') ||
       entry.name === 'Package.swift' ||
-      entry.name === 'RuntimeScheduler.h'
+      entry.name === 'RuntimeScheduler.h' ||
+      entry.name === 'RetainedSwiftPointer.h' ||
+      entry.name === 'HostFunctionClosure.h'
     ) {
       processFile(fullPath);
     }
