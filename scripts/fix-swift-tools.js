@@ -28,6 +28,14 @@ function processFile(filePath) {
 
   // 3. Fix JavaScriptRuntime.swift
   if (filePath.endsWith('JavaScriptRuntime.swift')) {
+    const hasCRLF = content.includes('\r\n');
+    content = content.replace(/\r\n/g, '\n');
+
+    // Add SendablePointer at top if not present
+    if (!content.includes('struct SendablePointer')) {
+      content = 'private struct SendablePointer<T>: @unchecked Sendable {\n  let pointer: T\n}\n\n' + content;
+    }
+
     // Fix trailing comma in closure tuple
     content = content.replace(
       /_ arguments: consuming JavaScriptValuesBuffer,\s*\)/g,
@@ -43,6 +51,25 @@ function processFile(filePath) {
       /for propertyName in propertyNames \{[\s\S]*?vector\.push_back\([^\)]*\)\s*\}/m,
       'for propertyName in propertyNames {\n        expo.pushPropNameId(&vector, iRuntime, std.string(propertyName))\n      }'
     );
+    // Fix getter resultPtr race error
+    content = content.replace(
+      /let propertyName = String\(cString: propertyName\)\s*\n\s*nonisolated\(unsafe\)\s+let\s+resultPtr\s*=\s*resultPtr([\s\S]*?try context\.get\(propertyName\)\.writeJSIValue\(to:\s*)resultPtr(\))/m,
+      'let propertyName = String(cString: propertyName)\n      let s_resultPtr = SendablePointer(pointer: resultPtr)$1s_resultPtr.pointer$2'
+    );
+    // Fix Call 1 (HostFunctionContext)
+    content = content.replace(
+      /nonisolated\(unsafe\)\s+let\s+thisPtr\s*=\s*thisPtr\s*\n\s*nonisolated\(unsafe\)\s+let\s+argumentsPtr\s*=\s*argumentsPtr\s*\n\s*nonisolated\(unsafe\)\s+let\s+resultPtr\s*=\s*resultPtr([\s\S]*?\(context:\s*HostFunctionContext[\s\S]*?UnsafeMutablePointer\(mutating:\s*)thisPtr(\)\.move\(\)[\s\S]*?start:\s*)argumentsPtr(,\s*count:\s*argumentsCount[\s\S]*?writeJSIValue\(to:\s*)resultPtr(\))/m,
+      'let s_thisPtr = SendablePointer(pointer: thisPtr)\n    let s_argumentsPtr = SendablePointer(pointer: argumentsPtr)\n    let s_resultPtr = SendablePointer(pointer: resultPtr)$1s_thisPtr.pointer$2$3s_argumentsPtr.pointer$4s_resultPtr.pointer$5'
+    );
+    // Fix Call 2 (UnownedThisHostFunctionContext)
+    content = content.replace(
+      /nonisolated\(unsafe\)\s+let\s+thisPtr\s*=\s*thisPtr\s*\n\s*nonisolated\(unsafe\)\s+let\s+argumentsPtr\s*=\s*argumentsPtr\s*\n\s*nonisolated\(unsafe\)\s+let\s+resultPtr\s*=\s*resultPtr([\s\S]*?\(context:\s*UnownedThisHostFunctionContext[\s\S]*?start:\s*)argumentsPtr(,\s*count:\s*argumentsCount[\s\S]*?runtime\.pointee,\s*)thisPtr(\)[\s\S]*?writeJSIValue\(to:\s*)resultPtr(\))/m,
+      'let s_thisPtr = SendablePointer(pointer: thisPtr)\n    let s_argumentsPtr = SendablePointer(pointer: argumentsPtr)\n    let s_resultPtr = SendablePointer(pointer: resultPtr)$1s_argumentsPtr.pointer$2s_thisPtr.pointer$3$4s_resultPtr.pointer$5'
+    );
+
+    if (hasCRLF) {
+      content = content.replace(/\n/g, '\r\n');
+    }
   }
 
   // 4. Fix RuntimeScheduler.h for Swift 6.0/6.1 compatibility
