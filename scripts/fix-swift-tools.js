@@ -65,6 +65,14 @@ function processFile(filePath) {
     content = patchSwiftInterfaceContent(content);
   }
 
+  // 2b. Fix MediaHandler.swift in expo-image-picker (removes iOS 26 compile-time error)
+  if (filePath.endsWith('MediaHandler.swift')) {
+    content = content.replace(
+      /let utType:\s*UTType\?\s*=\s*if #available\(iOS 26\.0, \*\)\s*\{[\s\S]*?\}\s*else\s*\{\s*([\s\S]*?)\s*\}/g,
+      'let utType: UTType? = $1'
+    );
+  }
+
   // All other patches are strictly for expo-modules-jsi
   if (filePath.includes('expo-modules-jsi')) {
 
