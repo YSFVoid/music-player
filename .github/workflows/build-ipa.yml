@@ -40,6 +40,9 @@ jobs:
           cd ios
           pod install --repo-update
 
+      - name: Re-patch Swift Files after CocoaPods
+        run: node scripts/fix-swift-tools.js
+
       - name: Build iOS Application Archive (Unsigned)
         run: |
           WORKSPACE=$(find ios -name "*.xcworkspace" | head -n 1)
