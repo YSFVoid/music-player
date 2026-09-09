@@ -1,5 +1,50 @@
 const fs = require('fs');
 const path = require('path');
+const child_process = require('child_process');
+
+function patchSwiftInterfaceContent(content) {
+  content = content.replace(/Apple Swift version 6\.[23][^\n]*/g, 'Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)');
+  content = content.replace(/-interface-compiler-version 6\.[23][^\s]*/g, '-interface-compiler-version 6.1.2');
+  content = content.replace(/extension UIKit\.UIView\s*:\s*@_Concurrency\.MainActor\s+ExpoModulesCore\.AnyArgument/g, 'extension UIKit.UIView : ExpoModulesCore.AnyArgument');
+  content = content.replace(/@_Concurrency\.MainActor/g, '@MainActor');
+  return content;
+}
+
+function patchTarball(tarPath) {
+  if (!fs.existsSync(tarPath)) return;
+  const tmpDir = path.join(path.dirname(tarPath), 'tmp_unpacked_' + path.basename(tarPath, '.tar.gz'));
+  if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  try {
+    child_process.execFileSync('tar', ['-xzf', tarPath, '-C', tmpDir]);
+    let patched = false;
+    function walk(dir) {
+      for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, f.name);
+        if (f.isDirectory()) walk(p);
+        else if (f.name.endsWith('.swiftinterface')) {
+          let c = fs.readFileSync(p, 'utf8');
+          const patchedC = patchSwiftInterfaceContent(c);
+          if (patchedC !== c) {
+            fs.writeFileSync(p, patchedC, 'utf8');
+            patched = true;
+          }
+        }
+      }
+    }
+    walk(tmpDir);
+    if (patched) {
+      const rootEntries = fs.readdirSync(tmpDir);
+      child_process.execFileSync('tar', ['-czf', tarPath, '-C', tmpDir, ...rootEntries]);
+      console.log(`[fix-swift] Patched tarball: ${tarPath}`);
+    }
+  } catch (e) {
+    console.warn(`[fix-swift] Failed to patch tarball ${tarPath}:`, e.message);
+  } finally {
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
 
 function processFile(filePath) {
   let content = fs.readFileSync(filePath, 'utf8');
@@ -7,7 +52,7 @@ function processFile(filePath) {
 
   // 1. Fix Swift tools version in Package.swift
   if (path.basename(filePath) === 'Package.swift') {
-    content = content.replace(/swift-tools-version:\s*6\.[12]/g, 'swift-tools-version: 6.0');
+    content = content.replace(/swift-tools-version:\s*6\.[123]/g, 'swift-tools-version: 6.0');
     if (content !== original) {
       fs.writeFileSync(filePath, content, 'utf8');
       console.log(`[fix-swift] Patched: ${filePath}`);
@@ -15,27 +60,9 @@ function processFile(filePath) {
     return;
   }
 
-  // 2. Force ExpoModulesCore to build from source
-  if (filePath.endsWith('ExpoModulesCore.podspec')) {
-    content = content.replace(
-      /if \(!Expo::PackagesConfig\.instance\.try_link_with_prebuilt_xcframework\(s\)\)/g,
-      'if true # force build from source'
-    );
-  }
-
-  // 3. Disable precompiled modules in autolinking
-  if (filePath.endsWith('precompiled_modules.rb')) {
-    content = content.replace(
-      'return true if prebuilt_react_active?',
-      'return false'
-    );
-  }
-
-  // 4. Fix any .swiftinterface files (replace Swift 6.3+ attributes)
+  // 2. Fix any .swiftinterface files directly
   if (filePath.endsWith('.swiftinterface')) {
-    content = content.replace(/@_Concurrency\.MainActor/g, '@MainActor');
-    content = content.replace(/Apple Swift version 6\.[23][^\n]*/g, 'Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)');
-    content = content.replace(/-interface-compiler-version 6\.[23][^\s]*/g, '-interface-compiler-version 6.1.2');
+    content = patchSwiftInterfaceContent(content);
   }
 
   // All other patches are strictly for expo-modules-jsi
@@ -190,12 +217,12 @@ function walkDir(dir) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       walkDir(fullPath);
+    } else if (entry.name.endsWith('.tar.gz') && fullPath.includes('prebuilds')) {
+      patchTarball(fullPath);
     } else if (
       entry.name.endsWith('.swift') ||
       entry.name.endsWith('.swiftinterface') ||
       entry.name === 'Package.swift' ||
-      entry.name === 'ExpoModulesCore.podspec' ||
-      entry.name === 'precompiled_modules.rb' ||
       entry.name === 'RuntimeScheduler.h' ||
       entry.name === 'RetainedSwiftPointer.h' ||
       entry.name === 'HostFunctionClosure.h' ||

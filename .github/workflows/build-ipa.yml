@@ -30,16 +30,12 @@ jobs:
         run: node scripts/fix-swift-tools.js
 
       - name: Expo Prebuild (Generate iOS Native Project)
-        env:
-          EXPO_USE_PRECOMPILED_MODULES: '0'
         run: npx expo prebuild --platform ios --clean
 
       - name: Re-patch Swift Tools Version after Prebuild
         run: node scripts/fix-swift-tools.js
 
       - name: Install CocoaPods Dependencies
-        env:
-          EXPO_USE_PRECOMPILED_MODULES: '0'
         run: |
           cd ios
           pod install --repo-update
