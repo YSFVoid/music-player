@@ -1,0 +1,57 @@
+name: Build Unsigned iOS IPA for Sideloadly
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install NPM Dependencies
+        run: npm install
+
+      - name: Expo Prebuild (Generate iOS Native Project)
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Build iOS Application Archive (Unsigned)
+        run: |
+          WORKSPACE=$(find ios -name "*.xcworkspace" | head -n 1)
+          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list -json | jq -r '.workspace.schemes[0]')
+          echo "Found workspace: $WORKSPACE"
+          echo "Found scheme: $SCHEME"
+          xcodebuild -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/derivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Package .app into .ipa for Sideloadly / AltStore
+        run: |
+          mkdir -p build/Payload
+          APP_PATH=$(find build/derivedData/Build/Products/Release-iphoneos -name "*.app" -maxdepth 1 | head -n 1)
+          echo "Found compiled app at: $APP_PATH"
+          cp -r "$APP_PATH" build/Payload/
+          cd build
+          zip -r MusicPlayer.ipa Payload
+
+      - name: Upload MusicPlayer.ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: MusicPlayer-iOS-IPA
+          path: build/MusicPlayer.ipa
+          retention-days: 14
