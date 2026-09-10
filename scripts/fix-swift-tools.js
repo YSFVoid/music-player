@@ -145,31 +145,81 @@ function processFile(filePath) {
 
   // 5. Fix RetainedSwiftPointer.h
   if (filePath.endsWith('RetainedSwiftPointer.h')) {
-    content = content.replace(/SWIFT_IMMORTAL_REFERENCE;/g, ';');
-    content = content.replace(/using Deallocator = void\(Context\);/g, 'using Deallocator = void (*)(Context);');
-    content = content.replace(/Deallocator \*_Nonnull _deallocator;/g, 'Deallocator _deallocator;');
-    if (!content.includes('RetainedSwiftPointer(const RetainedSwiftPointer &')) {
-      content = content.replace(
-        /virtual ~RetainedSwiftPointer\(\) = default;/g,
-        'virtual ~RetainedSwiftPointer() = default;\n  RetainedSwiftPointer(const RetainedSwiftPointer &other) : _context(other._context), _deallocator(other._deallocator) {}'
-      );
-    }
+    content = `#pragma once
+
+#include <memory>
+#include <swift/bridging>
+
+namespace expo {
+
+/**
+ Holds a type-erased pointer to a Swift instance that is now owned by this C++ instance.
+ Uses std::shared_ptr to safely maintain ownership across copies without premature deallocation.
+ */
+class RetainedSwiftPointer {
+public:
+  using Context = void *_Nonnull;
+  using Deallocator = void (*)(Context);
+
+  explicit RetainedSwiftPointer(Context context, Deallocator deallocator)
+    : _context(context),
+      _holder(context, [deallocator](void *ctx) {
+        if (ctx && deallocator) {
+          deallocator(ctx);
+        }
+      }) {}
+
+  virtual ~RetainedSwiftPointer() = default;
+  RetainedSwiftPointer(const RetainedSwiftPointer &other) = default;
+
+protected:
+  Context _context;
+  std::shared_ptr<void> _holder;
+};
+
+} // namespace expo
+`;
   }
 
   // 6. Fix HostFunctionClosure.h
   if (filePath.endsWith('HostFunctionClosure.h')) {
-    content = content.replace(/SWIFT_IMMORTAL_REFERENCE;/g, ';');
-    content = content.replace(
-      /using Closure = (?:bool|void)\s*\(Context context, const facebook::jsi::Value \*_Nonnull thisValue, const facebook::jsi::Value \*_Nonnull args, size_t count, facebook::jsi::Value \*_Nonnull result\);/g,
-      'using Closure = bool (*)(Context context, const facebook::jsi::Value *_Nonnull thisValue, const facebook::jsi::Value *_Nonnull args, size_t count, facebook::jsi::Value *_Nonnull result);'
-    );
-    content = content.replace(/Closure \*_Nonnull _closure;/g, 'Closure _closure;');
-    if (!content.includes('HostFunctionClosure(const HostFunctionClosure &')) {
-      content = content.replace(
-        /virtual ~HostFunctionClosure\(\)/g,
-        'HostFunctionClosure(const HostFunctionClosure &other) : RetainedSwiftPointer(other), _closure(other._closure) {}\n  virtual ~HostFunctionClosure()'
-      );
-    }
+    content = `#pragma once
+
+#include <swift/bridging>
+#include <jsi/jsi.h>
+#include <memory>
+
+#include "RetainedSwiftPointer.h"
+
+namespace expo {
+
+/**
+ Holds a pointer to a closure in Swift that provides host function's implementation.
+ Inherits RetainedSwiftPointer to keep the Swift closure context alive as long as this closure exists.
+ */
+class HostFunctionClosure final : public RetainedSwiftPointer {
+public:
+  using Closure = bool (*)(Context context, const facebook::jsi::Value *_Nonnull thisValue, const facebook::jsi::Value *_Nonnull args, size_t count, facebook::jsi::Value *_Nonnull result);
+
+  explicit HostFunctionClosure(Context context, Closure closure, Deallocator deallocator)
+    : RetainedSwiftPointer(context, deallocator), _closure(closure) {}
+
+  HostFunctionClosure(const HostFunctionClosure &other) = default;
+  virtual ~HostFunctionClosure() = default;
+
+  /**
+   Calls the Swift closure with given this value and arguments.
+   */
+  inline bool call(const facebook::jsi::Value &thisValue, const facebook::jsi::Value *_Nonnull args, size_t count, facebook::jsi::Value &result) const {
+    return _closure(_context, &thisValue, args, count, &result);
+  }
+
+private:
+  Closure _closure;
+};
+
+} // namespace expo
+`;
   }
 
   // 7. Fix JSIUtils.h (accept HostFunctionClosure by const ref)

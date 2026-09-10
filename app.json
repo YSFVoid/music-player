@@ -41,7 +41,9 @@
           "microphonePermission": false,
           "enableBackgroundPlayback": true
         }
-      ]
+      ],
+      "expo-font",
+      "expo-asset"
     ],
     "extra": {
       "eas": {
